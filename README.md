@@ -27,6 +27,16 @@ VITE_SUPABASE_ANON_KEY=...
 1. [supabase/schema.sql](supabase/schema.sql) — создаёт таблицы `groups`, `students`, `payments`, `managers`, `teachers`, `activity_log` + RLS-политики (открытые для anon-ключа, т.к. в приложении нет настоящей Supabase Auth).
 2. [supabase/seed.sql](supabase/seed.sql) — переносит текущие 25 групп / 346 студентов / 334 платежа / 5 менеджеров / 15 преподавателей (сгенерирован из бывших `src/seed-groups.js` / `src/seed-students.js`). Можно пропустить, если нужна пустая база.
 
+## Деплой (Vercel)
+
+Проект деплоится на Vercel через их git-интеграцию — отдельного workflow-файла в репозитории для этого нет, Vercel сам собирает Vite-проект при каждом push в `main`.
+
+Настройка (один раз, в дашборде Vercel):
+
+1. Import Project → выбрать этот GitHub-репозиторий. Framework Preset определится как **Vite** автоматически (build command `npm run build`, output directory `dist`).
+2. В Project Settings → Environment Variables добавить те же два ключа, что в `.env` локально: `VITE_SUPABASE_URL` и `VITE_SUPABASE_ANON_KEY`.
+3. Deploy — дальше каждый push в `main` пересобирает и выкатывает автоматически.
+
 ## Модель данных
 
 - **Группа** (`groups`): id, level, name, teacher, time, max_size (15), status active/archived, notes.
