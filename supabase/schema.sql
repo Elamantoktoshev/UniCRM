@@ -36,7 +36,9 @@ create table if not exists public.students (
   parent_phone text not null default '',
   address text not null default '',
   source text not null default '',
-  referrer_name text
+  referrer_name text,
+  discount_amount numeric not null default 0,
+  discount_note text
 );
 
 create table if not exists public.payments (

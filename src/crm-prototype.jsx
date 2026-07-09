@@ -5,7 +5,7 @@ import {
 import {
   Plus, Users, Target, TrendingUp, Percent, X, Loader2,
   ArrowLeft, Archive, ArchiveRestore, Pencil, Wallet, UserPlus, AlertTriangle, Check,
-  LogOut, History, Shield, Trash2, Search, Paperclip, Inbox, ChevronRight,
+  LogOut, History, Shield, Trash2, Search, Paperclip, Inbox, ChevronRight, Eye,
 } from "lucide-react";
 import { supabase } from "./supabaseClient.js";
 
@@ -18,7 +18,7 @@ const LEVELS = [
   "IELTS Prep", "Uni Academy", "Консалтинг",
 ];
 const DEFAULT_MANAGERS = ["Диана", "Венера", "Алия", "Эламан", "Анжелика"];
-const PAYMENT_METHODS = ["Наличные", "МБанк", "Бакай Банк"];
+const PAYMENT_METHODS = ["Наличные", "МБанк", "Бакай Банк", "МКасс"];
 const DEFAULT_SOURCES = ["Инстаграм", "Рекомендация", "Друг привёл", "Другое"];
 const DEFAULT_TEACHERS = [
   "Aizat", "Asel", "Baiysh", "Green", "Ilyaz", "Madina",
@@ -459,8 +459,14 @@ const Styles = () => (
     }
     .student-card:hover { border-color: var(--primary); box-shadow: 0 4px 14px rgba(32,26,22,0.06); }
     .student-card.archived { opacity: 0.55; }
-    .student-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+    .student-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .student-meta { font-size: 11px; color: var(--ink-soft); margin-bottom: 8px; }
+    .readonly-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: var(--surface-alt); color: var(--ink-soft);
+      border: 1px solid var(--line); border-radius: 20px;
+      padding: 1px 7px; font-size: 10px; font-weight: 500;
+    }
     .progress-track { background: var(--primary-soft); border-radius: 20px; height: 7px; overflow: hidden; margin-bottom: 5px; }
     .progress-fill { height: 100%; border-radius: 20px; background: var(--success); }
     .progress-fill.over { background: var(--danger); }
@@ -645,6 +651,7 @@ const rowToStudent = (r, payments) => ({
   payments, status: r.status, notes: r.notes || "", createdAt: r.created_at,
   parentPhone: r.parent_phone || "", address: r.address || "",
   source: r.source || "", referrerName: r.referrer_name || "",
+  discountAmount: Number(r.discount_amount) || 0, discountNote: r.discount_note || "",
 });
 const rowToPayment = (r) => ({
   id: r.id, amount: Number(r.amount) || 0, date: r.date, note: r.note || "",
@@ -668,7 +675,10 @@ const rowToRevenueAdjustment = (r) => ({
 });
 
 const GROUP_PATCH_MAP = { maxSize: "max_size" };
-const STUDENT_PATCH_MAP = { groupId: "group_id", contractAmount: "contract_amount", parentPhone: "parent_phone", referrerName: "referrer_name" };
+const STUDENT_PATCH_MAP = {
+  groupId: "group_id", contractAmount: "contract_amount", parentPhone: "parent_phone", referrerName: "referrer_name",
+  discountAmount: "discount_amount", discountNote: "discount_note",
+};
 const PAYMENT_PATCH_MAP = {
   courseDurationMonths: "course_duration_months", recognitionStartMonth: "recognition_start_month",
   paymentMethod: "payment_method", receiptPath: "receipt_path",
@@ -738,6 +748,7 @@ async function dbInsertStudent(s) {
     manager: s.manager, contract_amount: s.contractAmount, status: s.status, notes: s.notes,
     parent_phone: s.parentPhone || "", address: s.address || "",
     source: s.source || "", referrer_name: s.referrerName || "",
+    discount_amount: s.discountAmount || 0, discount_note: s.discountNote || "",
   });
   if (error) console.error("insert student failed", error);
 }
@@ -1000,11 +1011,20 @@ export default function CRM() {
     logActivity({ action: `Добавил студента — ${s.name} (${group.name})`, entityType: "student", entityId: s.id });
   };
 
+  // A manager may only edit their own students, and may never reassign the
+  // `manager` field on anyone's student (even their own) — that's admin-only.
+  // This mirrors the UI gating in StudentModal, so a manipulated/older client
+  // can't bypass it by calling these functions directly.
   const updateStudent = (id, patch, actionLabel) => {
     const student = students.find((s) => s.id === id);
+    if (!student) return;
+    if (session.role !== "admin") {
+      if (student.manager !== session.name) return;
+      if ("manager" in patch) return;
+    }
     setStudents(students.map((s) => (s.id === id ? { ...s, ...patch } : s)));
     dbUpdateStudent(id, patch);
-    if (actionLabel && student) {
+    if (actionLabel) {
       logActivity({ action: actionLabel, entityType: "student", entityId: id });
     }
   };
@@ -1013,6 +1033,8 @@ export default function CRM() {
     const amt = Number(amount);
     if (!amt || amt <= 0 || !paymentMethod) return;
     const student = students.find((s) => s.id === studentId);
+    if (!student) return;
+    if (session.role !== "admin" && student.manager !== session.name) return;
     const paymentDate = date || new Date().toISOString().slice(0, 10);
     const duration = Math.max(1, Number(courseDurationMonths) || 1);
     const payment = {
@@ -1214,14 +1236,17 @@ export default function CRM() {
     }
   };
 
-  /* ---- derived ---- */
-  const isVisibleToUser = useCallback(
+  /* ---- derived ----
+     Managers can now SEE every student in every group (full roster, like
+     admin); this predicate is only about EDIT permission — whether the
+     signed-in user may change this particular student's data. */
+  const canEditStudent = useCallback(
     (student) => !session || session.role === "admin" || student.manager === session.name,
     [session]
   );
   const activeStudentsCount = useMemo(
-    () => students.filter((s) => s.status === "active" && isVisibleToUser(s)).length,
-    [students, isVisibleToUser]
+    () => students.filter((s) => s.status === "active").length,
+    [students]
   );
   const totalRevenue = useMemo(() => students.reduce((s, st) => s + totalPaid(st), 0), [students]);
   const totalDebt = useMemo(
@@ -1372,7 +1397,6 @@ export default function CRM() {
             <GlobalSearch
               students={students}
               groups={groups}
-              isVisibleToUser={isVisibleToUser}
               onSelectStudent={setSelectedStudentId}
             />
           </div>
@@ -1388,7 +1412,7 @@ export default function CRM() {
                 managers={managers}
                 teachers={teachers}
                 session={session}
-                isVisibleToUser={isVisibleToUser}
+                canEditStudent={canEditStudent}
                 studentFilter={studentFilter}
                 setStudentFilter={setStudentFilter}
                 showNewStudentForm={showNewStudentForm}
@@ -1546,7 +1570,7 @@ function LoginScreen({ onLogin, loading, error }) {
    Global search — students only, scoped by visibility
 --------------------------------------------------------- */
 
-function GlobalSearch({ students, groups, isVisibleToUser, onSelectStudent }) {
+function GlobalSearch({ students, groups, onSelectStudent }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const containerRef = useRef(null);
@@ -1588,7 +1612,6 @@ function GlobalSearch({ students, groups, isVisibleToUser, onSelectStudent }) {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     return students
-      .filter(isVisibleToUser)
       .filter((s) => {
         const group = groupsById[s.groupId];
         const haystack = [s.name, s.phone, s.level, s.manager, group ? group.name : ""]
@@ -1597,7 +1620,7 @@ function GlobalSearch({ students, groups, isVisibleToUser, onSelectStudent }) {
         return haystack.includes(q);
       })
       .slice(0, 20);
-  }, [students, groupsById, query, isVisibleToUser]);
+  }, [students, groupsById, query]);
 
   const openStudent = (id) => {
     onSelectStudent(id);
@@ -1770,7 +1793,7 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
 --------------------------------------------------------- */
 
 function GroupDetail({
-  group, groups, students, managers, teachers, session, isVisibleToUser, studentFilter, setStudentFilter,
+  group, groups, students, managers, teachers, session, canEditStudent, studentFilter, setStudentFilter,
   showNewStudentForm, setShowNewStudentForm, addStudent, updateGroup, onSelectStudent,
 }) {
   const [form, setForm] = useState({ name: "", phone: "", manager: managers[0] || "", contractAmount: "" });
@@ -1789,8 +1812,8 @@ function GroupDetail({
   };
 
   const groupStudents = useMemo(
-    () => students.filter((s) => s.groupId === group.id && s.status === studentFilter && isVisibleToUser(s)),
-    [students, group.id, studentFilter, isVisibleToUser]
+    () => students.filter((s) => s.groupId === group.id && s.status === studentFilter),
+    [students, group.id, studentFilter]
   );
   const activeCount = useMemo(
     () => students.filter((s) => s.groupId === group.id && s.status === "active").length,
@@ -1917,9 +1940,17 @@ function GroupDetail({
           const rem = remaining(s);
           const pct = s.contractAmount > 0 ? Math.min(100, Math.round((paid / s.contractAmount) * 100)) : 0;
           const fillClass = rem < 0 ? "over" : paid === 0 ? "zero" : "";
+          const readOnly = !canEditStudent(s);
           return (
             <div key={s.id} className={`student-card ${s.status === "archived" ? "archived" : ""}`} onClick={() => onSelectStudent(s.id)}>
-              <div className="student-name">{s.name}</div>
+              <div className="student-name">
+                {s.name}
+                {readOnly && (
+                  <span className="readonly-badge" title="Только просмотр — студент другого менеджера">
+                    <Eye size={11} /> {s.manager || "без менеджера"}
+                  </span>
+                )}
+              </div>
               <div className="student-meta">{s.manager || "менеджер не указан"}{s.phone ? ` · ${s.phone}` : ""}</div>
               <div className="progress-track">
                 <div className={`progress-fill ${fillClass}`} style={{ width: `${pct}%` }} />
@@ -1966,6 +1997,8 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
   const [referrerName, setReferrerName] = useState(student.referrerName || "");
   const [manager, setManager] = useState(student.manager);
   const [contractAmount, setContractAmount] = useState(String(student.contractAmount || 0));
+  const [discountAmount, setDiscountAmount] = useState(String(student.discountAmount || 0));
+  const [discountNote, setDiscountNote] = useState(student.discountNote || "");
   const [transferTarget, setTransferTarget] = useState(student.groupId);
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [newPaymentAmount, setNewPaymentAmount] = useState("");
@@ -2004,6 +2037,8 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
     setReferrerName(student.referrerName || "");
     setManager(student.manager);
     setContractAmount(String(student.contractAmount || 0));
+    setDiscountAmount(String(student.discountAmount || 0));
+    setDiscountNote(student.discountNote || "");
     setTransferTarget(student.groupId);
     setNotes(student.notes || "");
     resetPaymentForm();
@@ -2014,6 +2049,12 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
   const rem = remaining(student);
   const pct = student.contractAmount > 0 ? Math.min(100, Math.round((paid / student.contractAmount) * 100)) : 0;
   const fillClass = rem < 0 ? "over" : paid === 0 ? "zero" : "";
+  // A manager can fully edit only their own students; everyone else's data
+  // is view-only. The manager-assignment field itself is admin-only no
+  // matter whose student it is, so a manager can never reassign a student
+  // to/from themselves.
+  const canEdit = session.role === "admin" || student.manager === session.name;
+  const canEditManagerField = session.role === "admin";
 
   const saveField = (patch, actionLabel) => updateStudent(student.id, patch, actionLabel);
 
@@ -2089,11 +2130,17 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
           <button className="modal-close" onClick={onClose}><X size={18} /></button>
         </div>
 
+        {!canEdit && (
+          <div className="warn-text" style={{ marginBottom: 14, color: "var(--ink-soft)", background: "var(--surface-alt)", padding: "8px 10px", borderRadius: 8 }}>
+            <Eye size={13} /> Только просмотр — студент менеджера «{student.manager || "не указан"}». Редактировать можно только своих студентов.
+          </div>
+        )}
+
         <div className="field-row">
           <div className="field">
             <label>Имя</label>
             <input
-              value={name} onChange={(e) => setName(e.target.value)}
+              value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit}
               onBlur={() => {
                 const n = name.trim() || student.name;
                 if (n !== student.name) saveField({ name: n }, `Изменил имя студента — ${student.name} → ${n}`);
@@ -2103,7 +2150,7 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
           <div className="field">
             <label>Телефон</label>
             <input
-              value={phone} onChange={(e) => setPhone(e.target.value)}
+              value={phone} onChange={(e) => setPhone(e.target.value)} disabled={!canEdit}
               onBlur={() => { if (phone !== student.phone) saveField({ phone }, `Изменил телефон — ${student.name}`); }}
             />
           </div>
@@ -2112,14 +2159,14 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
           <div className="field">
             <label>Телефон родителя</label>
             <input
-              value={parentPhone} onChange={(e) => setParentPhone(e.target.value)}
+              value={parentPhone} onChange={(e) => setParentPhone(e.target.value)} disabled={!canEdit}
               onBlur={() => { if (parentPhone !== (student.parentPhone || "")) saveField({ parentPhone }, `Изменил телефон родителя — ${student.name}`); }}
             />
           </div>
           <div className="field">
             <label>Адрес</label>
             <input
-              value={address} onChange={(e) => setAddress(e.target.value)}
+              value={address} onChange={(e) => setAddress(e.target.value)} disabled={!canEdit}
               onBlur={() => { if (address !== (student.address || "")) saveField({ address }, `Изменил адрес — ${student.name}`); }}
             />
           </div>
@@ -2127,21 +2174,27 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
         <div className="field-row">
           <div className="field">
             <label>Менеджер</label>
-            <select
-              value={manager}
-              onChange={(e) => {
-                const val = e.target.value;
-                setManager(val);
-                saveField({ manager: val }, `Изменил менеджера — ${student.name}: ${student.manager} → ${val}`);
-              }}
-            >
-              {managers.map((m) => <option key={m}>{m}</option>)}
-            </select>
+            {canEditManagerField ? (
+              <select
+                value={manager}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setManager(val);
+                  saveField({ manager: val }, `Изменил менеджера — ${student.name}: ${student.manager} → ${val}`);
+                }}
+              >
+                {managers.map((m) => <option key={m}>{m}</option>)}
+              </select>
+            ) : (
+              <div style={{ padding: "7px 9px", fontSize: 12.5, color: "var(--ink-soft)" }}>
+                {student.manager || "—"} <span style={{ fontSize: 10.5 }}>(менять может только супер-админ)</span>
+              </div>
+            )}
           </div>
           <div className="field">
             <label>Сумма контракта (KGS)</label>
             <input
-              type="number" className="crm-mono" value={contractAmount}
+              type="number" className="crm-mono" value={contractAmount} disabled={!canEdit}
               onChange={(e) => setContractAmount(e.target.value)}
               onBlur={() => {
                 const val = Number(contractAmount) || 0;
@@ -2155,7 +2208,7 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
           <div className="field" style={source === "Друг привёл" ? undefined : { gridColumn: "1 / -1" }}>
             <label>Откуда пришёл</label>
             <select
-              value={source}
+              value={source} disabled={!canEdit}
               onChange={(e) => {
                 const val = e.target.value;
                 setSource(val);
@@ -2170,7 +2223,7 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
             <div className="field">
               <label>Имя друга</label>
               <input
-                value={referrerName} onChange={(e) => setReferrerName(e.target.value)}
+                value={referrerName} onChange={(e) => setReferrerName(e.target.value)} disabled={!canEdit}
                 placeholder="Необязательно"
                 onBlur={() => {
                   if (referrerName !== (student.referrerName || "")) saveField({ referrerName }, `Изменил имя друга — ${student.name}`);
@@ -2178,6 +2231,30 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
               />
             </div>
           )}
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Скидка (сом/мес)</label>
+            <input
+              type="number" className="crm-mono" value={discountAmount} disabled={!canEdit}
+              onChange={(e) => setDiscountAmount(e.target.value)}
+              onBlur={() => {
+                const val = Number(discountAmount) || 0;
+                const old = student.discountAmount || 0;
+                if (val !== old) saveField({ discountAmount: val }, `Изменил скидку — ${student.name}: ${fmt(old)} → ${fmt(val)} сом/мес`);
+              }}
+            />
+          </div>
+          <div className="field">
+            <label>Причина скидки</label>
+            <input
+              value={discountNote} onChange={(e) => setDiscountNote(e.target.value)} disabled={!canEdit}
+              placeholder="Например: скидка от директора, семейная скидка, промо"
+              onBlur={() => {
+                if (discountNote !== (student.discountNote || "")) saveField({ discountNote }, `Изменил причину скидки — ${student.name}`);
+              }}
+            />
+          </div>
         </div>
 
         <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 14 }}>
@@ -2197,6 +2274,21 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
             <span>Оплачено: {fmt(paid)}</span>
             <span>{rem >= 0 ? `Остаток: ${fmt(rem)}` : `Переплата: ${fmt(-rem)}`}</span>
           </div>
+          {student.discountAmount > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--line)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                <span style={{ color: "var(--ink-soft)" }}>Сумма по контракту</span>
+                <span className="crm-mono">{fmt(student.contractAmount)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span style={{ color: "var(--ink-soft)" }}>Скидка</span>
+                <span className="crm-mono" style={{ color: "var(--warning)" }}>−{fmt(student.discountAmount)} / мес</span>
+              </div>
+              {student.discountNote && (
+                <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }}>{student.discountNote}</div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="section-title" style={{ marginTop: 0 }}>История платежей</div>
@@ -2229,94 +2321,98 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
             </div>
           ))}
         </div>
-        {editingPaymentId && (
-          <div className="warn-text" style={{ marginBottom: 8, color: "var(--primary-hover)" }}>
-            <Pencil size={13} /> Редактирование платежа — изменения обновят существующую запись
-          </div>
-        )}
-        <div className="form-grid" style={{ marginBottom: 6 }}>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Сумма оплаты</label>
-            <input
-              type="number" className="crm-mono" placeholder="10000"
-              value={newPaymentAmount} onChange={(e) => setNewPaymentAmount(e.target.value)}
-            />
-          </div>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Способ оплаты</label>
-            <select value={newPaymentMethod} onChange={(e) => setNewPaymentMethod(e.target.value)}>
-              <option value="">— выберите —</option>
-              {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
-            </select>
-          </div>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Дата оплаты</label>
-            <input
-              type="date" className="crm-mono"
-              value={newPaymentDate} onChange={(e) => setNewPaymentDate(e.target.value)}
-            />
-          </div>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>За какой месяц</label>
-            <input
-              type="month" className="crm-mono"
-              value={newPaymentRecognitionMonth} onChange={(e) => setNewPaymentRecognitionMonth(e.target.value)}
-            />
-          </div>
-          {editingPaymentId && (
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Длительность курса (мес.)</label>
-              <input
-                type="number" min="1" className="crm-mono"
-                value={newPaymentDuration} onChange={(e) => setNewPaymentDuration(e.target.value)}
-              />
+        {canEdit && (
+          <>
+            {editingPaymentId && (
+              <div className="warn-text" style={{ marginBottom: 8, color: "var(--primary-hover)" }}>
+                <Pencil size={13} /> Редактирование платежа — изменения обновят существующую запись
+              </div>
+            )}
+            <div className="form-grid" style={{ marginBottom: 6 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Сумма оплаты</label>
+                <input
+                  type="number" className="crm-mono" placeholder="10000"
+                  value={newPaymentAmount} onChange={(e) => setNewPaymentAmount(e.target.value)}
+                />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Способ оплаты</label>
+                <select value={newPaymentMethod} onChange={(e) => setNewPaymentMethod(e.target.value)}>
+                  <option value="">— выберите —</option>
+                  {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Дата оплаты</label>
+                <input
+                  type="date" className="crm-mono"
+                  value={newPaymentDate} onChange={(e) => setNewPaymentDate(e.target.value)}
+                />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>За какой месяц</label>
+                <input
+                  type="month" className="crm-mono"
+                  value={newPaymentRecognitionMonth} onChange={(e) => setNewPaymentRecognitionMonth(e.target.value)}
+                />
+              </div>
+              {editingPaymentId && (
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>Длительность курса (мес.)</label>
+                  <input
+                    type="number" min="1" className="crm-mono"
+                    value={newPaymentDuration} onChange={(e) => setNewPaymentDuration(e.target.value)}
+                  />
+                </div>
+              )}
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Чек (фото или PDF, необязательно)</label>
+                <input
+                  type="file" accept="image/*,.pdf"
+                  onChange={(e) => setNewReceiptFile(e.target.files?.[0] || null)}
+                />
+              </div>
             </div>
-          )}
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Чек (фото или PDF, необязательно)</label>
-            <input
-              type="file" accept="image/*,.pdf"
-              onChange={(e) => setNewReceiptFile(e.target.files?.[0] || null)}
-            />
-          </div>
-        </div>
-        <div style={{ marginBottom: 6, display: "flex", gap: 8 }}>
-          <button
-            className="btn-primary" onClick={submitPayment}
-            disabled={!newPaymentAmount || !newPaymentMethod || uploadingReceipt}
-          >
-            {uploadingReceipt ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Wallet size={13} />}
-            {uploadingReceipt ? "Сохраняем…" : editingPaymentId ? "Сохранить изменения" : "Добавить оплату"}
-          </button>
-          {editingPaymentId && (
-            <button className="btn-secondary" onClick={resetPaymentForm}>Отмена</button>
-          )}
-        </div>
-        {receiptError && (
-          <div className="warn-text" style={{ marginBottom: 10 }}>
-            <AlertTriangle size={13} /> {receiptError}
-          </div>
-        )}
-        <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 20 }}>
-          «Дата оплаты» — когда деньги реально получены (для кассы). «За какой месяц» — с какого месяца засчитывается выручка. Новая оплата всегда засчитывается за один месяц; если это оплата за несколько месяцев (пакет), укажите длительность позже через «Изменить» — админ сможет распределить сумму равными долями вперёд. Способ оплаты обязателен, чек — по желанию.
-        </div>
+            <div style={{ marginBottom: 6, display: "flex", gap: 8 }}>
+              <button
+                className="btn-primary" onClick={submitPayment}
+                disabled={!newPaymentAmount || !newPaymentMethod || uploadingReceipt}
+              >
+                {uploadingReceipt ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Wallet size={13} />}
+                {uploadingReceipt ? "Сохраняем…" : editingPaymentId ? "Сохранить изменения" : "Добавить оплату"}
+              </button>
+              {editingPaymentId && (
+                <button className="btn-secondary" onClick={resetPaymentForm}>Отмена</button>
+              )}
+            </div>
+            {receiptError && (
+              <div className="warn-text" style={{ marginBottom: 10 }}>
+                <AlertTriangle size={13} /> {receiptError}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: "var(--ink-soft)", marginBottom: 20 }}>
+              «Дата оплаты» — когда деньги реально получены (для кассы). «За какой месяц» — с какого месяца засчитывается выручка. Новая оплата всегда засчитывается за один месяц; если это оплата за несколько месяцев (пакет), укажите длительность позже через «Изменить» — админ сможет распределить сумму равными долями вперёд. Способ оплаты обязателен, чек — по желанию.
+            </div>
 
-        <div className="section-title">Перевести в другую группу</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          <select
-            style={{ flex: 1, padding: "7px 9px", border: "1px solid var(--line)", borderRadius: 6, fontSize: 12.5 }}
-            value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)}
-          >
-            {groups.map((g) => <option key={g.id} value={g.id}>{g.level} · {g.name}</option>)}
-          </select>
-          <button className="btn-secondary" onClick={submitTransfer}><Pencil size={13} /> Перевести</button>
-        </div>
+            <div className="section-title">Перевести в другую группу</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              <select
+                style={{ flex: 1, padding: "7px 9px", border: "1px solid var(--line)", borderRadius: 6, fontSize: 12.5 }}
+                value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)}
+              >
+                {groups.map((g) => <option key={g.id} value={g.id}>{g.level} · {g.name}</option>)}
+              </select>
+              <button className="btn-secondary" onClick={submitTransfer}><Pencil size={13} /> Перевести</button>
+            </div>
+          </>
+        )}
 
         <div className="section-title">Заметки</div>
         <div className="field" style={{ marginBottom: 20 }}>
           <textarea
             className="notes-field"
-            value={notes}
+            value={notes} disabled={!canEdit}
             onChange={(e) => setNotes(e.target.value)}
             onBlur={() => {
               if (notes !== (student.notes || "")) saveField({ notes }, `Изменил заметку — ${student.name}`);
@@ -2325,17 +2421,19 @@ function StudentModal({ student, groups, managers, sources, activityLog, session
           />
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {student.status === "active" ? (
-            <button className="btn-secondary" onClick={() => archiveStudent(student.id)}>
-              <Archive size={13} /> Архивировать
-            </button>
-          ) : (
-            <button className="btn-secondary" onClick={() => restoreStudent(student.id)}>
-              <ArchiveRestore size={13} /> Восстановить
-            </button>
-          )}
-        </div>
+        {canEdit && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            {student.status === "active" ? (
+              <button className="btn-secondary" onClick={() => archiveStudent(student.id)}>
+                <Archive size={13} /> Архивировать
+              </button>
+            ) : (
+              <button className="btn-secondary" onClick={() => restoreStudent(student.id)}>
+                <ArchiveRestore size={13} /> Восстановить
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="section-title">История изменений</div>
         <div className="chart-card">
