@@ -2,7 +2,7 @@ import CRM from "./crm-prototype.jsx";
 
 function App() {
   return (
-    <div style={{ padding: 24, background: "#EEF1EA", minHeight: "100vh" }}>
+    <div className="app-shell" style={{ padding: 24, background: "#FAFAF9", minHeight: "100vh" }}>
       <CRM />
     </div>
   );

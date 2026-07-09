@@ -24,3 +24,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Raw student data files and one-off import reports (contain real PII —
+# names/phones/contract amounts). Import scripts themselves are fine to
+# commit; their generated reports and source spreadsheets are not.
+Копия_Intensive.xlsx
+scripts/*_report.json
+scripts/*_warnings*.txt
