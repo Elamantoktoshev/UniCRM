@@ -731,16 +731,30 @@ async function loadAll() {
   };
 }
 
+// Every db* write function below reports failures through this, so a failed
+// insert/update/delete is never silent — it used to only hit console.error,
+// which let writes fail invisibly while the UI's optimistic update made it
+// look like the save had worked (e.g. a new student appearing, then vanishing
+// on the next reload because it was never actually persisted).
+function reportDbError(action, error) {
+  console.error(action, error);
+  showToast(`Не удалось сохранить: ${error?.message || action}`, "error");
+}
+
 async function dbInsertGroup(g) {
   const { error } = await supabase.from("groups").insert({
     id: g.id, level: g.level, name: g.name, teacher: g.teacher, time: g.time,
     max_size: g.maxSize, status: g.status, notes: g.notes,
   });
-  if (error) console.error("insert group failed", error);
+  if (error) reportDbError("insert group failed", error);
 }
 async function dbUpdateGroup(id, patch) {
   const { error } = await supabase.from("groups").update(toRowPatch(patch, GROUP_PATCH_MAP)).eq("id", id);
-  if (error) console.error("update group failed", error);
+  if (error) reportDbError("update group failed", error);
+}
+async function dbDeleteGroup(id) {
+  const { error } = await supabase.from("groups").delete().eq("id", id);
+  if (error) reportDbError("delete group failed", error);
 }
 async function dbInsertStudent(s) {
   const { error } = await supabase.from("students").insert({
@@ -750,11 +764,11 @@ async function dbInsertStudent(s) {
     source: s.source || "", referrer_name: s.referrerName || "",
     discount_amount: s.discountAmount || 0, discount_note: s.discountNote || "",
   });
-  if (error) console.error("insert student failed", error);
+  if (error) reportDbError("insert student failed", error);
 }
 async function dbUpdateStudent(id, patch) {
   const { error } = await supabase.from("students").update(toRowPatch(patch, STUDENT_PATCH_MAP)).eq("id", id);
-  if (error) console.error("update student failed", error);
+  if (error) reportDbError("update student failed", error);
 }
 async function dbInsertPayment(p, studentId) {
   const { error } = await supabase.from("payments").insert({
@@ -762,7 +776,7 @@ async function dbInsertPayment(p, studentId) {
     course_duration_months: p.courseDurationMonths, recognition_start_month: p.recognitionStartMonth,
     payment_method: p.paymentMethod, receipt_path: p.receiptPath,
   });
-  if (error) console.error("insert payment failed", error);
+  if (error) reportDbError("insert payment failed", error);
 }
 async function uploadReceipt(studentId, file) {
   const safeName = file.name.replace(/\s+/g, "_");
@@ -778,41 +792,41 @@ async function getReceiptUrl(path) {
 }
 async function dbUpdatePayment(id, patch) {
   const { error } = await supabase.from("payments").update(toRowPatch(patch, PAYMENT_PATCH_MAP)).eq("id", id);
-  if (error) console.error("update payment failed", error);
+  if (error) reportDbError("update payment failed", error);
 }
 async function dbDeletePayment(id) {
   const { error } = await supabase.from("payments").delete().eq("id", id);
-  if (error) console.error("delete payment failed", error);
+  if (error) reportDbError("delete payment failed", error);
 }
 async function dbInsertManager(name) {
   const { error } = await supabase.from("managers").insert({ name });
-  if (error) console.error("insert manager failed", error);
+  if (error) reportDbError("insert manager failed", error);
 }
 async function dbInsertTeacher(name) {
   const { error } = await supabase.from("teachers").insert({ name });
-  if (error) console.error("insert teacher failed", error);
+  if (error) reportDbError("insert teacher failed", error);
 }
 async function dbInsertSource(name) {
   const { error } = await supabase.from("sources").insert({ name });
-  if (error) console.error("insert source failed", error);
+  if (error) reportDbError("insert source failed", error);
 }
 async function dbInsertActivity(entry) {
   const { error } = await supabase.from("activity_log").insert({
     id: entry.id, timestamp: entry.timestamp, actor: entry.actor, action: entry.action,
     entity_type: entry.entityType, entity_id: entry.entityId,
   });
-  if (error) console.error("insert activity failed", error);
+  if (error) reportDbError("insert activity failed", error);
 }
 async function dbInsertExpenseCategory(name, group) {
   const { error } = await supabase.from("expense_categories").insert({ name, group_key: group });
-  if (error) console.error("insert expense category failed", error);
+  if (error) reportDbError("insert expense category failed", error);
 }
 async function dbInsertExpense(e) {
   const { error } = await supabase.from("expenses").insert({
     id: e.id, category: e.category, amount: e.amount, month: e.month, note: e.note,
     is_recurring: e.isRecurring, overrides_expense_id: e.overridesExpenseId, created_by: e.createdBy,
   });
-  if (error) console.error("insert expense failed", error);
+  if (error) reportDbError("insert expense failed", error);
 }
 async function dbUpdateExpense(id, patch) {
   const row = {};
@@ -822,21 +836,21 @@ async function dbUpdateExpense(id, patch) {
   if ("note" in patch) row.note = patch.note;
   if ("isRecurring" in patch) row.is_recurring = patch.isRecurring;
   const { error } = await supabase.from("expenses").update(row).eq("id", id);
-  if (error) console.error("update expense failed", error);
+  if (error) reportDbError("update expense failed", error);
 }
 async function dbDeleteExpense(id) {
   const { error } = await supabase.from("expenses").delete().eq("id", id);
-  if (error) console.error("delete expense failed", error);
+  if (error) reportDbError("delete expense failed", error);
 }
 async function dbInsertRevenueAdjustment(a) {
   const { error } = await supabase.from("revenue_adjustments").insert({
     id: a.id, student_id: a.studentId, amount: a.amount, month: a.month, note: a.note, created_by: a.createdBy,
   });
-  if (error) console.error("insert revenue adjustment failed", error);
+  if (error) reportDbError("insert revenue adjustment failed", error);
 }
 async function dbDeleteRevenueAdjustment(id) {
   const { error } = await supabase.from("revenue_adjustments").delete().eq("id", id);
-  if (error) console.error("delete revenue adjustment failed", error);
+  if (error) reportDbError("delete revenue adjustment failed", error);
 }
 
 /* ---------------------------------------------------------
@@ -988,6 +1002,47 @@ export default function CRM() {
     if (actionLabel && group) {
       logActivity({ action: actionLabel, entityType: "group", entityId: id });
     }
+  };
+
+  // Open/close/delete are super-admin-only actions — the buttons are already
+  // hidden from managers in the UI, but guard here too (defense in depth,
+  // same pattern as updateStudent/addPayment).
+  const closeGroup = (id) => {
+    if (session.role !== "admin") return;
+    const group = groups.find((g) => g.id === id);
+    if (!group) return;
+    updateGroup(id, { status: "archived" }, `Закрыл группу «${group.name}» (${group.level})`);
+  };
+  const openGroup = (id) => {
+    if (session.role !== "admin") return;
+    const group = groups.find((g) => g.id === id);
+    if (!group) return;
+    updateGroup(id, { status: "active" }, `Открыл группу «${group.name}» (${group.level})`);
+  };
+  const deleteGroup = (id, transferToGroupId) => {
+    if (session.role !== "admin") return;
+    const group = groups.find((g) => g.id === id);
+    if (!group) return;
+    const affected = students.filter((s) => s.groupId === id);
+
+    let actionNote = "";
+    if (affected.length > 0) {
+      if (transferToGroupId) {
+        const target = groups.find((g) => g.id === transferToGroupId);
+        if (!target) return;
+        setStudents(students.map((s) => (s.groupId === id ? { ...s, groupId: transferToGroupId } : s)));
+        affected.forEach((s) => dbUpdateStudent(s.id, { groupId: transferToGroupId }));
+        actionNote = ` — ${affected.length} студентов перенесены в «${target.name}»`;
+      } else {
+        setStudents(students.map((s) => (s.groupId === id ? { ...s, groupId: null } : s)));
+        affected.forEach((s) => dbUpdateStudent(s.id, { groupId: null }));
+        actionNote = ` — ${affected.length} студентов остались без группы`;
+      }
+    }
+
+    setGroups(groups.filter((g) => g.id !== id));
+    dbDeleteGroup(id);
+    logActivity({ action: `Удалил группу «${group.name}» (${group.level})${actionNote}`, entityType: "group", entityId: id });
   };
 
   const addStudent = (groupId, { name, phone, manager, contractAmount }) => {
@@ -1254,7 +1309,12 @@ export default function CRM() {
     [students]
   );
 
-  const selectedGroup = groups.find((g) => g.id === selectedGroupId) || null;
+  // "Без группы" is a synthetic per-level bucket (id "unassigned::<level>"),
+  // not a real row — it reuses GroupDetail to show students whose groupId
+  // was cleared by deleting their group without picking a transfer target.
+  const selectedGroup = selectedGroupId && selectedGroupId.startsWith("unassigned::")
+    ? { id: selectedGroupId, level: selectedGroupId.slice("unassigned::".length), name: "Без группы", time: "-", teacher: "-", notes: "", status: "active", maxSize: Infinity, isVirtual: true }
+    : groups.find((g) => g.id === selectedGroupId) || null;
   const selectedStudent = students.find((s) => s.id === selectedStudentId) || null;
 
   if (authLoading) {
@@ -1419,6 +1479,10 @@ export default function CRM() {
                 setShowNewStudentForm={setShowNewStudentForm}
                 addStudent={addStudent}
                 updateGroup={updateGroup}
+                closeGroup={closeGroup}
+                openGroup={openGroup}
+                deleteGroup={deleteGroup}
+                onGroupDeleted={() => setSelectedGroupId(null)}
                 onSelectStudent={setSelectedStudentId}
               />
             ) : (
@@ -1672,6 +1736,7 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
   // where a CSS rule forces the body open regardless of this state anyway).
   // On mobile this becomes a real accordion — tap a level to collapse it.
   const [expandedLevels, setExpandedLevels] = useState(() => new Set(LEVELS));
+  const [statusFilter, setStatusFilter] = useState("all"); // all | active | archived
   const toggleLevel = (level) => {
     setExpandedLevels((prev) => {
       const next = new Set(prev);
@@ -1682,15 +1747,24 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
 
   const activeCount = (groupId) => students.filter((s) => s.groupId === groupId && s.status === "active").length;
 
+  const unassignedCountByLevel = useMemo(() => {
+    const map = {};
+    for (const s of students) {
+      if (s.groupId === null && s.status === "active") map[s.level] = (map[s.level] || 0) + 1;
+    }
+    return map;
+  }, [students]);
+
   const byLevel = useMemo(() => {
     const map = {};
     for (const level of LEVELS) map[level] = [];
     for (const g of groups) {
+      if (statusFilter !== "all" && g.status !== statusFilter) continue;
       if (!map[g.level]) map[g.level] = [];
       map[g.level].push(g);
     }
     return map;
-  }, [groups]);
+  }, [groups, statusFilter]);
 
   const submit = () => {
     if (!form.time.trim() && !form.name.trim()) return;
@@ -1701,10 +1775,16 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
 
   return (
     <>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
         <button className="btn-primary" onClick={() => setShowNewGroupForm((v) => !v)}>
           <Plus size={14} /> Создать группу
         </button>
+        <div className="chip-row" style={{ marginBottom: 0 }}>
+          <span style={{ fontSize: 11.5, color: "var(--ink-soft)", marginRight: 2 }}>Показать:</span>
+          <button className={`chip ${statusFilter === "all" ? "active" : ""}`} onClick={() => setStatusFilter("all")}>Все</button>
+          <button className={`chip ${statusFilter === "active" ? "active" : ""}`} onClick={() => setStatusFilter("active")}>Только открытые</button>
+          <button className={`chip ${statusFilter === "archived" ? "active" : ""}`} onClick={() => setStatusFilter("archived")}>Только закрытые</button>
+        </div>
       </div>
 
       {showNewGroupForm && (
@@ -1742,7 +1822,8 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
 
       {LEVELS.map((level) => {
         const levelGroups = byLevel[level] || [];
-        if (levelGroups.length === 0) return null;
+        const unassigned = unassignedCountByLevel[level] || 0;
+        if (levelGroups.length === 0 && unassigned === 0) return null;
         const isOpen = expandedLevels.has(level);
         return (
           <div key={level} className="level-section">
@@ -1770,6 +1851,17 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
                     </div>
                   );
                 })}
+                {unassigned > 0 && (
+                  <div
+                    className="group-card"
+                    style={{ borderStyle: "dashed" }}
+                    onClick={() => onSelectGroup(`unassigned::${level}`)}
+                  >
+                    <div className="group-card-name">Без группы</div>
+                    <div className="group-card-meta">студенты без назначенной группы</div>
+                    <div className="group-card-count">{unassigned} студентов</div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1794,12 +1886,14 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
 
 function GroupDetail({
   group, groups, students, managers, teachers, session, canEditStudent, studentFilter, setStudentFilter,
-  showNewStudentForm, setShowNewStudentForm, addStudent, updateGroup, onSelectStudent,
+  showNewStudentForm, setShowNewStudentForm, addStudent, updateGroup, closeGroup, openGroup, deleteGroup, onGroupDeleted, onSelectStudent,
 }) {
   const [form, setForm] = useState({ name: "", phone: "", manager: managers[0] || "", contractAmount: "" });
   const [renaming, setRenaming] = useState(false);
   const [nameInput, setNameInput] = useState(group.name);
   const [notes, setNotes] = useState(group.notes || "");
+  const [deleteStep, setDeleteStep] = useState(null); // null | "confirm-empty" | "choose"
+  const [transferTargetId, setTransferTargetId] = useState("");
 
   const startRename = () => {
     setNameInput(group.name);
@@ -1811,14 +1905,48 @@ function GroupDetail({
     setRenaming(false);
   };
 
+  const inThisGroup = (s) => (group.isVirtual ? s.groupId === null && s.level === group.level : s.groupId === group.id);
   const groupStudents = useMemo(
-    () => students.filter((s) => s.groupId === group.id && s.status === studentFilter),
-    [students, group.id, studentFilter]
+    () => students.filter((s) => inThisGroup(s) && s.status === studentFilter),
+    [students, group.id, group.isVirtual, group.level, studentFilter]
   );
   const activeCount = useMemo(
-    () => students.filter((s) => s.groupId === group.id && s.status === "active").length,
-    [students, group.id]
+    () => students.filter((s) => inThisGroup(s) && s.status === "active").length,
+    [students, group.id, group.isVirtual, group.level]
   );
+  const totalCount = useMemo(
+    () => students.filter(inThisGroup).length,
+    [students, group.id, group.isVirtual, group.level]
+  );
+  const sameLevelGroups = useMemo(
+    () => groups.filter((g) => g.level === group.level && g.id !== group.id),
+    [groups, group.level, group.id]
+  );
+
+  const startDelete = () => {
+    if (totalCount === 0) {
+      if (window.confirm(`Удалить группу «${group.name}»? Действие необратимо.`)) {
+        deleteGroup(group.id);
+        onGroupDeleted();
+      }
+      return;
+    }
+    setTransferTargetId("");
+    setDeleteStep("choose");
+  };
+  const confirmDeleteWithTransfer = () => {
+    if (!transferTargetId) return;
+    deleteGroup(group.id, transferTargetId);
+    onGroupDeleted();
+    setDeleteStep(null);
+  };
+  const confirmDeleteUnassign = () => {
+    if (window.confirm(`Оставить ${totalCount} студентов без группы и удалить «${group.name}»?`)) {
+      deleteGroup(group.id);
+      onGroupDeleted();
+      setDeleteStep(null);
+    }
+  };
 
   const submit = () => {
     if (!form.name.trim()) return;
@@ -1845,37 +1973,83 @@ function GroupDetail({
           ) : (
             <>
               <span className="crm-slab" style={{ fontSize: 16, fontWeight: 700 }}>{group.name}</span>
-              <button className="icon-btn" onClick={startRename} title="Изменить название"><Pencil size={12} /></button>
+              {!group.isVirtual && (
+                <button className="icon-btn" onClick={startRename} title="Изменить название"><Pencil size={12} /></button>
+              )}
             </>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 12 }}>
-          <span>Время: <b style={{ color: "var(--ink)" }}>{group.time}</b></span>
-          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            Преподаватель:
-            <select
-              className="teacher-select"
-              value={group.teacher}
-              onChange={(e) => updateGroup(group.id, { teacher: e.target.value }, `Изменил преподавателя группы «${group.name}»: ${group.teacher} → ${e.target.value}`)}
-            >
-              <option value="-">—</option>
-              {teachers.map((t) => <option key={t}>{t}</option>)}
-            </select>
-          </span>
-          {group.status === "archived" && <span className="badge lost">закрыта</span>}
+          {group.isVirtual ? (
+            <span>Уровень: <b style={{ color: "var(--ink)" }}>{group.level}</b></span>
+          ) : (
+            <>
+              <span>Время: <b style={{ color: "var(--ink)" }}>{group.time}</b></span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                Преподаватель:
+                <select
+                  className="teacher-select"
+                  value={group.teacher}
+                  onChange={(e) => updateGroup(group.id, { teacher: e.target.value }, `Изменил преподавателя группы «${group.name}»: ${group.teacher} → ${e.target.value}`)}
+                >
+                  <option value="-">—</option>
+                  {teachers.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </span>
+              {group.status === "archived" && <span className="badge lost">закрыта</span>}
+            </>
+          )}
         </div>
-        <div className="field">
-          <label>Заметки о группе</label>
-          <textarea
-            className="notes-field"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            onBlur={() => {
-              if (notes !== (group.notes || "")) updateGroup(group.id, { notes }, `Изменил заметку группы «${group.name}»`);
-            }}
-            placeholder="Например: группа переезжает на новое время, нужен ассистент…"
-          />
-        </div>
+        {!group.isVirtual && (
+          <div className="field">
+            <label>Заметки о группе</label>
+            <textarea
+              className="notes-field"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onBlur={() => {
+                if (notes !== (group.notes || "")) updateGroup(group.id, { notes }, `Изменил заметку группы «${group.name}»`);
+              }}
+              placeholder="Например: группа переезжает на новое время, нужен ассистент…"
+            />
+          </div>
+        )}
+
+        {!group.isVirtual && session.role === "admin" && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+            {group.status === "archived" ? (
+              <button className="btn-secondary" onClick={() => openGroup(group.id)}><ArchiveRestore size={13} /> Открыть группу</button>
+            ) : (
+              <button className="btn-secondary" onClick={() => closeGroup(group.id)}><Archive size={13} /> Закрыть группу</button>
+            )}
+            <button className="icon-btn danger" onClick={startDelete}><Trash2 size={13} /> Удалить группу</button>
+          </div>
+        )}
+
+        {deleteStep === "choose" && (
+          <div className="warn-text-block" style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "var(--warning-soft)" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10, fontSize: 12.5 }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>В этой группе {totalCount} студентов. Удаление группы не удалит самих студентов, но им нужно будет назначить другую группу.</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+              <select
+                style={{ flex: 1, minWidth: 200, padding: "7px 9px", border: "1px solid var(--line)", borderRadius: 6, fontSize: 12.5 }}
+                value={transferTargetId} onChange={(e) => setTransferTargetId(e.target.value)}
+              >
+                <option value="">— выберите группу того же уровня —</option>
+                {sameLevelGroups.map((g) => <option key={g.id} value={g.id}>{g.name}{g.status === "archived" ? " (закрыта)" : ""}</option>)}
+              </select>
+              <button className="btn-primary" onClick={confirmDeleteWithTransfer} disabled={!transferTargetId}>
+                Перенести и удалить
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn-secondary" onClick={confirmDeleteUnassign}>Всё равно удалить, оставить студентов без группы</button>
+              <button className="icon-btn" onClick={() => setDeleteStep(null)}>Отмена</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="chip-row">
@@ -1885,14 +2059,16 @@ function GroupDetail({
         <button className={`chip ${studentFilter === "archived" ? "active" : ""}`} onClick={() => setStudentFilter("archived")}>
           Архив
         </button>
-        <div style={{ marginLeft: "auto" }}>
-          <button className="btn-primary" onClick={() => setShowNewStudentForm((v) => !v)}>
-            <UserPlus size={14} /> Добавить студента
-          </button>
-        </div>
+        {!group.isVirtual && (
+          <div style={{ marginLeft: "auto" }}>
+            <button className="btn-primary" onClick={() => setShowNewStudentForm((v) => !v)}>
+              <UserPlus size={14} /> Добавить студента
+            </button>
+          </div>
+        )}
       </div>
 
-      {showNewStudentForm && (
+      {!group.isVirtual && showNewStudentForm && (
         <div className="form-card">
           {activeCount >= group.maxSize && (
             <div className="warn-text" style={{ marginBottom: 10 }}>
@@ -1967,13 +2143,17 @@ function GroupDetail({
       </div>
       {groupStudents.length === 0 && (
         studentFilter === "active" ? (
-          <EmptyState
-            icon={<UserPlus size={22} />}
-            title="В группе пока нет активных студентов"
-            sub="Добавьте первого студента в эту группу"
-            actionLabel="Добавить студента"
-            onAction={() => setShowNewStudentForm(true)}
-          />
+          group.isVirtual ? (
+            <EmptyState icon={<Users size={22} />} title="Студентов без группы на этом уровне нет" />
+          ) : (
+            <EmptyState
+              icon={<UserPlus size={22} />}
+              title="В группе пока нет активных студентов"
+              sub="Добавьте первого студента в эту группу"
+              actionLabel="Добавить студента"
+              onAction={() => setShowNewStudentForm(true)}
+            />
+          )
         ) : (
           <EmptyState icon={<Archive size={22} />} title="В архиве этой группы никого нет" />
         )
