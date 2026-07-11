@@ -5,7 +5,7 @@ import {
 import {
   Plus, Users, Target, TrendingUp, Percent, X, Loader2,
   ArrowLeft, Archive, ArchiveRestore, Pencil, Wallet, UserPlus, AlertTriangle, Check,
-  LogOut, History, Shield, Trash2, Search, Paperclip, Inbox, ChevronRight, Eye,
+  LogOut, History, Shield, Trash2, Search, Paperclip, Inbox, ChevronRight, Eye, User, Layers,
 } from "lucide-react";
 import { supabase } from "./supabaseClient.js";
 
@@ -48,6 +48,8 @@ const DEFAULT_EXPENSE_CATEGORIES = [
   { name: "Активити", group: "cogs" },
 ];
 const GROUP_MAX_SIZE = 15;
+const DAYS_OF_WEEK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const DEFAULT_DAYS = "Пн,Вт,Ср,Чт,Пт";
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const fmt = (n) =>
@@ -271,26 +273,28 @@ const Styles = () => (
     .crm-brand-title { font-size: 18px; font-weight: 800; letter-spacing: 0.1px; font-family: 'Manrope', sans-serif; color: #FFFFFF; }
     .crm-brand-sub { font-size: 11px; opacity: 0.9; margin-top: 3px; letter-spacing: 0.4px; text-transform: uppercase; color: #FFFFFF; }
 
-    /* Text sits directly on the orange --primary background, so tabs stay
-       fully opaque white (measured ~3.6:1 contrast — meets WCAG AA for
-       large/UI text, not body text) rather than dimmed like the old dark
-       sidebar; the active tab gets a solid white pill for a much stronger,
-       unambiguous contrast instead of relying on opacity. */
+    /* Text sits directly on the orange --primary background. Inactive tabs
+       are very slightly dimmed (opacity 0.92, still ~3.25:1 contrast — kept
+       comfortably above the 3:1 WCAG AA floor for UI text) so the active
+       tab's solid white pill reads as clearly more important, not just
+       differently colored. */
     .crm-tab {
       display: flex; align-items: center; gap: 10px;
       padding: 12px 20px;
       font-size: 13.5px; font-weight: 600;
       cursor: pointer; border: none; background: transparent; color: #FFFFFF;
+      opacity: 0.92;
       text-align: left; width: 100%;
       border-left: 3px solid transparent;
       transition: all .15s ease;
       min-height: 44px;
     }
-    .crm-tab:hover { background: rgba(255,255,255,0.18); }
+    .crm-tab:hover { background: rgba(255,255,255,0.2); opacity: 1; }
     .crm-tab.active {
-      background: #FFFFFF; color: var(--primary-hover);
+      background: #FFFFFF; color: var(--primary-hover); opacity: 1;
       border-radius: 0 8px 8px 0; border-left: 3px solid var(--ink);
       font-weight: 700;
+      box-shadow: 0 2px 10px rgba(32,26,22,0.18);
     }
 
     .crm-main { flex: 1; min-width: 0; background: var(--surface); display: flex; flex-direction: column; max-height: 720px; }
@@ -303,6 +307,7 @@ const Styles = () => (
 
     /* KPI cards */
     .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    .kpi-grid.groups-kpi-grid { grid-template-columns: repeat(3, 1fr); }
     .kpi-card { background: var(--surface-alt); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; transition: box-shadow .15s ease; }
     .kpi-label { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; display:flex; align-items:center; gap:6px; }
     .kpi-value { font-size: 21px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
@@ -407,7 +412,7 @@ const Styles = () => (
     .empty-state-title { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
     .empty-state-sub { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 16px; }
 
-    /* Filter chips */
+    /* Filter chips (still used for other filters, e.g. archived students) */
     .chip-row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .chip {
       border: 1px solid var(--line); background: var(--surface); border-radius: 20px;
@@ -417,40 +422,132 @@ const Styles = () => (
     .chip:active { transform: scale(0.97); }
     .chip.active { background: var(--primary); color: white; border-color: var(--primary); }
 
-    /* Group cards */
-    .group-card {
-      background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
-      padding: 14px 16px; cursor: pointer; transition: all .15s ease;
+    /* Segmented control — a single capsule with one highlighted, elevated
+       segment, standard iOS/Material pattern; used for the Groups status
+       filter instead of separate chip buttons so the active state reads
+       unambiguously at a glance. */
+    .segmented-control {
+      display: inline-flex; background: var(--surface-alt); border: 1px solid var(--line);
+      border-radius: 11px; padding: 3px; gap: 2px;
     }
-    .group-card:hover { border-color: var(--primary); box-shadow: 0 4px 14px rgba(32,26,22,0.07); transform: translateY(-1px); }
-    .group-card.archived { opacity: 0.6; }
-    .group-card-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
-    .group-card-meta { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 10px; }
-    .group-card-count { font-size: 13px; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
-    .group-card-count.full { color: var(--danger); }
-    .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .segmented-control button {
+      border: none; background: transparent; color: var(--ink-soft);
+      font-size: 12.5px; font-weight: 600; padding: 7px 14px; border-radius: 8px;
+      cursor: pointer; transition: all .15s ease; min-height: 34px; white-space: nowrap;
+    }
+    .segmented-control button:hover:not(.active) { color: var(--ink); }
+    .segmented-control button.active {
+      background: var(--surface); color: var(--ink);
+      box-shadow: 0 1px 4px rgba(32,26,22,0.14);
+    }
 
-    /* Level accordion (Groups by level) */
-    .level-section { margin-bottom: 10px; border: 1px solid transparent; }
+    /* Group cards — bigger, more informative: name+status up top, the
+       class time is the dominant visual element, day-of-week pills, then
+       teacher/student meta rows with icons, capacity bar anchors the
+       bottom. Closed groups mute instead of the old blanket opacity
+       (which also faded the badge). */
+    .group-card {
+      background: var(--surface-alt); border: 1px solid var(--line); border-left: 3px solid var(--line);
+      border-radius: 16px; padding: 18px; cursor: pointer; transition: all .15s ease; position: relative;
+    }
+    .group-card:hover { border-color: var(--primary); box-shadow: 0 8px 22px rgba(32,26,22,0.1); transform: translateY(-2px); }
+    .group-card.needs-attention { border-left-color: var(--warning); }
+    .group-card.archived { background: var(--surface-alt); border-left-color: var(--line); opacity: 0.75; }
+    .gc-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+    .group-card-name { font-size: 14px; font-weight: 700; line-height: 1.35; }
+    .gc-status-badge {
+      font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+      padding: 3px 9px; border-radius: 20px; flex-shrink: 0; white-space: nowrap;
+    }
+    .gc-status-badge.open { background: var(--success-soft); color: var(--success); }
+    .gc-status-badge.closed { background: var(--line); color: var(--ink-soft); }
+    .gc-time-big {
+      font-size: 22px; font-weight: 800; color: var(--primary); font-family: 'IBM Plex Mono', monospace;
+      margin-bottom: 10px; line-height: 1.1;
+    }
+    .gc-days { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+    .gc-day-pill {
+      font-size: 10.5px; font-weight: 600; color: var(--ink-soft); background: var(--surface);
+      border: 1px solid var(--line); border-radius: 20px; padding: 2px 9px;
+      font-family: inherit; cursor: default; transition: all .15s ease;
+    }
+    /* Same pill used interactively in the create/edit-group day picker. */
+    button.gc-day-pill { cursor: pointer; padding: 5px 11px; min-height: 30px; }
+    button.gc-day-pill:hover { border-color: var(--primary); color: var(--primary-hover); }
+    button.gc-day-pill.selected { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .gc-meta-row {
+      display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft);
+      margin-bottom: 6px;
+    }
+    .gc-meta-row svg { flex-shrink: 0; color: var(--ink-faint, var(--ink-soft)); }
+    .gc-meta-row b { color: var(--ink); font-weight: 600; }
+    .group-capacity-row { display: flex; align-items: baseline; justify-content: space-between; margin: 12px 0 6px; }
+    .group-capacity-count { font-size: 15px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+    .group-capacity-count .max { font-size: 11px; font-weight: 500; color: var(--ink-soft); }
+    .group-capacity-track { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; height: 8px; overflow: hidden; }
+    .group-card.archived .group-capacity-track { background: var(--line); }
+    .group-capacity-fill { height: 100%; border-radius: 20px; transition: width .2s ease; }
+    .group-capacity-fill.low { background: var(--success); }
+    .group-capacity-fill.mid { background: var(--warning); }
+    .group-capacity-fill.full { background: var(--danger); }
+    .group-card-quick-action {
+      position: absolute; bottom: 16px; right: 16px;
+      width: 30px; height: 30px; border-radius: 50%;
+      background: var(--primary); color: #fff; border: none;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; opacity: 0; transform: scale(0.85);
+      transition: opacity .15s ease, transform .15s ease;
+      box-shadow: 0 3px 10px rgba(232,89,12,0.35);
+    }
+    @media (hover: hover) {
+      .group-card:hover .group-card-quick-action { opacity: 1; transform: scale(1); }
+    }
+    @media (hover: none) {
+      .group-card-quick-action { opacity: 0.85; transform: scale(0.92); }
+    }
+    .group-card-quick-action:hover { background: var(--primary-hover); }
+    .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 24px; }
+
+    /* Level filter pill-tabs — dynamic, one per level actually present in
+       the data (see GroupsList), plus "Все". */
+    .level-pill-tabs {
+      display: flex; gap: 4px; background: var(--surface-alt); border: 1px solid var(--line);
+      border-radius: 24px; padding: 4px; margin-bottom: 20px; overflow-x: auto;
+      scrollbar-width: none; -ms-overflow-style: none;
+    }
+    .level-pill-tabs::-webkit-scrollbar { display: none; }
+    .level-pill-tab {
+      border: none; background: transparent; color: var(--ink-soft); font-size: 13px; font-weight: 600;
+      padding: 8px 16px; border-radius: 20px; cursor: pointer; white-space: nowrap; transition: all .15s ease;
+      flex-shrink: 0; min-height: 36px;
+    }
+    .level-pill-tab:hover:not(.active) { background: rgba(32,26,22,0.06); color: var(--ink); }
+    .level-pill-tab.active { background: var(--ink); color: #fff; font-weight: 700; }
+
+    /* Level accordion (Groups by level). .level-header is a plain div now
+       (not a button) because it holds two separate interactive children —
+       the collapse toggle and the "Редактировать" button — and a button
+       can't nest another button. */
+    .level-section { margin-bottom: 14px; border: 1px solid transparent; }
     .level-header {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      cursor: pointer; background: none; border: none; width: 100%; padding: 4px 0;
-      font: inherit; text-align: left;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; row-gap: 6px;
+      padding: 8px 0; flex-wrap: wrap;
+    }
+    .level-header-toggle {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      cursor: pointer; background: none; border: none; padding: 0;
+      font: inherit; text-align: left; color: inherit; flex: 1; min-width: 0;
     }
     .level-header-left { display: flex; align-items: center; gap: 8px; }
+    .level-header-icon { color: var(--primary); flex-shrink: 0; }
+    .level-header-title { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-soft); }
+    .level-summary { font-size: 11px; color: var(--ink-soft); font-family: 'IBM Plex Mono', monospace; }
+    .level-summary b { color: var(--ink); font-weight: 600; }
     .level-chevron { transition: transform .15s ease; color: var(--ink-soft); flex-shrink: 0; }
     .level-chevron.open { transform: rotate(90deg); }
-    .level-count { font-size: 11px; color: var(--ink-soft); font-family: 'IBM Plex Mono', monospace; }
-    .level-body { overflow: hidden; max-height: 3000px; transition: max-height .2s ease; }
+    .level-edit-btn { flex-shrink: 0; }
+    .level-body { overflow: hidden; max-height: 8000px; transition: max-height .25s ease; }
     .level-body.collapsed { max-height: 0; }
-    /* Desktop keeps the old always-expanded layout: the accordion only
-       actually collapses on mobile (see the max-width query below). */
-    @media (min-width: 768px) {
-      .level-chevron { display: none; }
-      .level-body, .level-body.collapsed { max-height: none !important; overflow: visible; }
-      .level-header { cursor: default; }
-    }
-
     /* Student cards */
     .student-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
     .student-card {
@@ -514,6 +611,50 @@ const Styles = () => (
     .search-result-row:hover { background: var(--primary-soft); }
     .search-result-name { font-weight: 600; margin-bottom: 2px; }
     .search-result-meta { font-size: 11px; color: var(--ink-soft); }
+
+    /* Prominent inline search (Groups page) — the primary way to find
+       something on that page, not a small icon-triggered popup. */
+    .groups-search { position: relative; margin-bottom: 22px; }
+    .groups-search-input-wrap {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 1.5px solid var(--line); border-radius: 14px;
+      padding: 14px 18px; transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .groups-search-input-wrap:focus-within {
+      border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-soft);
+    }
+    .groups-search-input-wrap svg { color: var(--ink-soft); flex-shrink: 0; }
+    .groups-search-input-wrap input {
+      flex: 1; border: none; outline: none; background: transparent;
+      font-size: 15px; font-family: inherit; color: var(--ink); min-width: 0;
+    }
+    .groups-search-input-wrap input::placeholder { color: var(--ink-soft); }
+    .groups-search-clear {
+      border: none; background: var(--surface-alt); color: var(--ink-soft); border-radius: 50%;
+      width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+    .groups-search-dropdown {
+      position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 60;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+      box-shadow: 0 16px 40px rgba(32,26,22,0.14); padding: 8px; max-height: 420px; overflow-y: auto;
+    }
+    .groups-search-group-label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--ink-soft);
+      padding: 8px 10px 4px;
+    }
+    .groups-search-result {
+      display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 10px; cursor: pointer;
+    }
+    .groups-search-result:hover { background: var(--surface-alt); }
+    .groups-search-result-icon {
+      width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .groups-search-result-icon.student { background: var(--primary-soft); color: var(--primary-hover); }
+    .groups-search-result-icon.group { background: var(--success-soft); color: var(--success); }
+    .groups-search-result-title { font-size: 13px; font-weight: 600; }
+    .groups-search-result-sub { font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
 
     /* Login screen */
     .login-root { align-items: center; justify-content: center; padding: 40px; }
@@ -589,8 +730,13 @@ const Styles = () => (
 
       .btn-primary, .btn-secondary, .btn-danger { min-height: 44px; font-size: 13.5px; }
       .chip { min-height: 44px; }
+      .segmented-control button { min-height: 40px; }
+      .segmented-control { width: 100%; }
+      .segmented-control button { flex: 1; }
 
       .group-grid, .student-grid { grid-template-columns: 1fr; }
+
+      .kpi-grid.groups-kpi-grid { grid-template-columns: 1fr 1fr; }
 
       .level-chevron { display: inline-flex; }
       .level-body.collapsed { max-height: 0; }
@@ -644,6 +790,7 @@ const ACTIVITY_LOG_LIMIT = 500;
 const rowToGroup = (r) => ({
   id: r.id, level: r.level, name: r.name, teacher: r.teacher, time: r.time,
   maxSize: r.max_size, status: r.status, notes: r.notes || "",
+  days: r.days || DEFAULT_DAYS,
 });
 const rowToStudent = (r, payments) => ({
   id: r.id, name: r.name, phone: r.phone || "", level: r.level, groupId: r.group_id,
@@ -744,7 +891,7 @@ function reportDbError(action, error) {
 async function dbInsertGroup(g) {
   const { error } = await supabase.from("groups").insert({
     id: g.id, level: g.level, name: g.name, teacher: g.teacher, time: g.time,
-    max_size: g.maxSize, status: g.status, notes: g.notes,
+    max_size: g.maxSize, status: g.status, notes: g.notes, days: g.days || DEFAULT_DAYS,
   });
   if (error) reportDbError("insert group failed", error);
 }
@@ -978,7 +1125,7 @@ export default function CRM() {
     showToast(action);
   };
 
-  const addGroup = ({ level, time, name, teacher }) => {
+  const addGroup = ({ level, time, name, teacher, days }) => {
     const g = {
       id: uid(),
       level,
@@ -988,6 +1135,7 @@ export default function CRM() {
       maxSize: GROUP_MAX_SIZE,
       status: "active",
       notes: "",
+      days: days || DEFAULT_DAYS,
     };
     setGroups([g, ...groups]);
     dbInsertGroup(g);
@@ -1451,14 +1599,18 @@ export default function CRM() {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div className="crm-mono" style={{ fontSize: 12, color: "var(--ink-soft)" }}>
-              Активных студентов: {activeStudentsCount} · Групп: {groups.filter((g) => g.status === "active").length}
-            </div>
-            <GlobalSearch
-              students={students}
-              groups={groups}
-              onSelectStudent={setSelectedStudentId}
-            />
+            {!(view === "groups" && !selectedGroup) && (
+              <div className="crm-mono" style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                Активных студентов: {activeStudentsCount} · Групп: {groups.filter((g) => g.status === "active").length}
+              </div>
+            )}
+            {!(view === "groups" && !selectedGroup) && (
+              <GlobalSearch
+                students={students}
+                groups={groups}
+                onSelectStudent={setSelectedStudentId}
+              />
+            )}
           </div>
         </div>
 
@@ -1494,6 +1646,8 @@ export default function CRM() {
                 setShowNewGroupForm={setShowNewGroupForm}
                 addGroup={addGroup}
                 onSelectGroup={setSelectedGroupId}
+                onSelectStudent={setSelectedStudentId}
+                onQuickAddStudent={(groupId) => { setSelectedGroupId(groupId); setShowNewStudentForm(true); }}
               />
             )
           ) : view === "cfo" ? (
@@ -1730,13 +1884,119 @@ function GlobalSearch({ students, groups, onSelectStudent }) {
    Groups list view
 --------------------------------------------------------- */
 
-function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGroupForm, addGroup, onSelectGroup }) {
-  const [form, setForm] = useState({ level: LEVELS[0], time: "", name: "", teacher: teachers[0] || "" });
+function GroupsSearch({ groups, students, onSelectGroup, onSelectStudent }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    const handleKey = (e) => { if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); } };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, []);
+
+  const groupsById = useMemo(() => {
+    const map = {};
+    for (const g of groups) map[g.id] = g;
+    return map;
+  }, [groups]);
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return { groupResults: [], studentResults: [] };
+    const groupResults = groups
+      .filter((g) => [g.name, g.time, g.teacher, g.level].join(" ").toLowerCase().includes(q))
+      .slice(0, 6);
+    const studentResults = students
+      .filter((s) => {
+        const group = groupsById[s.groupId];
+        return [s.name, s.phone, s.level, s.manager, group ? group.name : ""].join(" ").toLowerCase().includes(q);
+      })
+      .slice(0, 8);
+    return { groupResults, studentResults };
+  }, [query, groups, students, groupsById]);
+
+  const hasResults = results.groupResults.length > 0 || results.studentResults.length > 0;
+
+  const pickGroup = (id) => { onSelectGroup(id); setOpen(false); setQuery(""); };
+  const pickStudent = (id) => { onSelectStudent(id); setOpen(false); setQuery(""); };
+
+  return (
+    <div className="groups-search" ref={containerRef}>
+      <div className="groups-search-input-wrap">
+        <Search size={18} />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Найти студента, группу, преподавателя…"
+        />
+        {query && (
+          <button className="groups-search-clear" onClick={() => { setQuery(""); inputRef.current?.focus(); }} title="Очистить">
+            <X size={13} />
+          </button>
+        )}
+      </div>
+      {open && query.trim() && (
+        <div className="groups-search-dropdown">
+          {!hasResults && <div className="empty-hint">Ничего не найдено</div>}
+          {results.groupResults.length > 0 && (
+            <>
+              <div className="groups-search-group-label">Группы</div>
+              {results.groupResults.map((g) => (
+                <div key={g.id} className="groups-search-result" onClick={() => pickGroup(g.id)}>
+                  <div className="groups-search-result-icon group"><Users size={15} /></div>
+                  <div>
+                    <div className="groups-search-result-title">{g.name}{g.status === "archived" ? " · закрыта" : ""}</div>
+                    <div className="groups-search-result-sub">{g.level} · {g.teacher} · {g.time}</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {results.studentResults.length > 0 && (
+            <>
+              <div className="groups-search-group-label">Студенты</div>
+              {results.studentResults.map((s) => {
+                const group = groupsById[s.groupId];
+                return (
+                  <div key={s.id} className="groups-search-result" onClick={() => pickStudent(s.id)}>
+                    <div className="groups-search-result-icon student"><User size={15} /></div>
+                    <div>
+                      <div className="groups-search-result-title">{s.name}</div>
+                      <div className="groups-search-result-sub">{s.level} · {group ? group.name : "без группы"} · {s.manager || "менеджер не указан"}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GroupsList({
+  groups, students, teachers, showNewGroupForm, setShowNewGroupForm, addGroup,
+  onSelectGroup, onSelectStudent, onQuickAddStudent,
+}) {
+  const [form, setForm] = useState({ level: LEVELS[0], time: "", name: "", teacher: teachers[0] || "", days: DAYS_OF_WEEK.slice(0, 5) });
   // Expanded by default (matches the old always-open layout on desktop,
   // where a CSS rule forces the body open regardless of this state anyway).
   // On mobile this becomes a real accordion — tap a level to collapse it.
   const [expandedLevels, setExpandedLevels] = useState(() => new Set(LEVELS));
   const [statusFilter, setStatusFilter] = useState("all"); // all | active | archived
+  const [levelFilter, setLevelFilter] = useState("all"); // all | one of realLevels
   const toggleLevel = (level) => {
     setExpandedLevels((prev) => {
       const next = new Set(prev);
@@ -1744,6 +2004,17 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
       return next;
     });
   };
+
+  // Tabs reflect whatever levels actually exist among real groups right
+  // now — never a hardcoded/invented list. LEVELS just supplies a sensible
+  // display order for the ones that are present; anything unexpected still
+  // shows up, appended alphabetically, instead of silently vanishing.
+  const realLevels = useMemo(() => {
+    const present = new Set(groups.map((g) => g.level));
+    const ordered = LEVELS.filter((l) => present.has(l));
+    const extra = [...present].filter((l) => !LEVELS.includes(l)).sort();
+    return [...ordered, ...extra];
+  }, [groups]);
 
   const activeCount = (groupId) => students.filter((s) => s.groupId === groupId && s.status === "active").length;
 
@@ -1757,33 +2028,89 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
 
   const byLevel = useMemo(() => {
     const map = {};
-    for (const level of LEVELS) map[level] = [];
+    for (const level of realLevels) map[level] = [];
     for (const g of groups) {
       if (statusFilter !== "all" && g.status !== statusFilter) continue;
       if (!map[g.level]) map[g.level] = [];
       map[g.level].push(g);
     }
     return map;
-  }, [groups, statusFilter]);
+  }, [groups, statusFilter, realLevels]);
+
+  // Per-level mini-summary (students / groups / free seats), independent of
+  // the status filter above so it always reflects the level's real state.
+  const levelStats = useMemo(() => {
+    const map = {};
+    for (const level of realLevels) {
+      const levelGroupsAll = groups.filter((g) => g.level === level);
+      const openLevelGroups = levelGroupsAll.filter((g) => g.status === "active");
+      const studentCount = students.filter((s) => s.level === level && s.status === "active").length;
+      const freeSeats = openLevelGroups.reduce((sum, g) => sum + Math.max(0, g.maxSize - activeCount(g.id)), 0);
+      map[level] = { studentCount, groupCount: levelGroupsAll.length, freeSeats };
+    }
+    return map;
+  }, [groups, students, realLevels]);
+
+  const overviewStats = useMemo(() => {
+    const openGroups = groups.filter((g) => g.status === "active");
+    const closedGroups = groups.filter((g) => g.status === "archived");
+    const freeSeats = openGroups.reduce((sum, g) => sum + Math.max(0, g.maxSize - activeCount(g.id)), 0);
+    const activeStudents = students.filter((s) => s.status === "active").length;
+    return { openCount: openGroups.length, closedCount: closedGroups.length, freeSeats, activeStudents };
+  }, [groups, students]);
+
+  const toggleFormDay = (day) => {
+    setForm((f) => ({
+      ...f,
+      days: f.days.includes(day) ? f.days.filter((d) => d !== day) : [...f.days, day].sort((a, b) => DAYS_OF_WEEK.indexOf(a) - DAYS_OF_WEEK.indexOf(b)),
+    }));
+  };
 
   const submit = () => {
     if (!form.time.trim() && !form.name.trim()) return;
-    addGroup(form);
-    setForm({ level: LEVELS[0], time: "", name: "", teacher: teachers[0] || "" });
+    addGroup({ ...form, days: form.days.join(",") || DEFAULT_DAYS });
+    setForm({ level: LEVELS[0], time: "", name: "", teacher: teachers[0] || "", days: DAYS_OF_WEEK.slice(0, 5) });
     setShowNewGroupForm(false);
   };
 
+  const levelsToRender = levelFilter === "all" ? realLevels : [levelFilter];
+
   return (
     <>
+      <GroupsSearch groups={groups} students={students} onSelectGroup={onSelectGroup} onSelectStudent={onSelectStudent} />
+
+      <div className="kpi-grid groups-kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-label"><UserPlus size={12} /> Активных студентов</div>
+          <div className="kpi-value crm-mono">{overviewStats.activeStudents}</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label"><Users size={12} /> Открытых групп</div>
+          <div className="kpi-value crm-mono">{overviewStats.openCount}<span style={{ fontSize: 13, color: "var(--ink-soft)", fontWeight: 500 }}> / {groups.length}</span></div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label"><Target size={12} /> Свободных мест</div>
+          <div className="kpi-value crm-mono">{overviewStats.freeSeats}</div>
+        </div>
+      </div>
+
+      <div className="level-pill-tabs">
+        <button className={`level-pill-tab ${levelFilter === "all" ? "active" : ""}`} onClick={() => setLevelFilter("all")}>Все</button>
+        {realLevels.map((level) => (
+          <button key={level} className={`level-pill-tab ${levelFilter === level ? "active" : ""}`} onClick={() => setLevelFilter(level)}>
+            {level}
+          </button>
+        ))}
+      </div>
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
         <button className="btn-primary" onClick={() => setShowNewGroupForm((v) => !v)}>
           <Plus size={14} /> Создать группу
         </button>
-        <div className="chip-row" style={{ marginBottom: 0 }}>
-          <span style={{ fontSize: 11.5, color: "var(--ink-soft)", marginRight: 2 }}>Показать:</span>
-          <button className={`chip ${statusFilter === "all" ? "active" : ""}`} onClick={() => setStatusFilter("all")}>Все</button>
-          <button className={`chip ${statusFilter === "active" ? "active" : ""}`} onClick={() => setStatusFilter("active")}>Только открытые</button>
-          <button className={`chip ${statusFilter === "archived" ? "active" : ""}`} onClick={() => setStatusFilter("archived")}>Только закрытые</button>
+        <div className="segmented-control">
+          <button className={statusFilter === "all" ? "active" : ""} onClick={() => setStatusFilter("all")}>Все</button>
+          <button className={statusFilter === "active" ? "active" : ""} onClick={() => setStatusFilter("active")}>Только открытые</button>
+          <button className={statusFilter === "archived" ? "active" : ""} onClick={() => setStatusFilter("archived")}>Только закрытые</button>
         </div>
       </div>
 
@@ -1812,7 +2139,21 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
               </select>
             </div>
           </div>
-          <div style={{ marginTop: 10 }}>
+          <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
+            <label>Дни занятий</label>
+            <div className="gc-days">
+              {DAYS_OF_WEEK.map((d) => (
+                <button
+                  key={d} type="button"
+                  className={`gc-day-pill ${form.days.includes(d) ? "selected" : ""}`}
+                  onClick={() => toggleFormDay(d)}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginTop: 14 }}>
             <button className="btn-primary" onClick={submit}>
               <Plus size={14} /> Сохранить группу
             </button>
@@ -1820,34 +2161,68 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
         </div>
       )}
 
-      {LEVELS.map((level) => {
+      {levelsToRender.map((level) => {
         const levelGroups = byLevel[level] || [];
         const unassigned = unassignedCountByLevel[level] || 0;
         if (levelGroups.length === 0 && unassigned === 0) return null;
         const isOpen = expandedLevels.has(level);
         return (
           <div key={level} className="level-section">
-            <button className="level-header" onClick={() => toggleLevel(level)}>
-              <span className="level-header-left">
+            <div className="level-header">
+              <button className="level-header-toggle" onClick={() => toggleLevel(level)}>
                 <ChevronRight size={15} className={`level-chevron ${isOpen ? "open" : ""}`} />
-                <span className="section-title" style={{ margin: 0 }}>{level}</span>
-              </span>
-              <span className="level-count">{levelGroups.length}</span>
-            </button>
+                <Layers size={15} className="level-header-icon" />
+                <span className="level-header-title">Уровень: {level}</span>
+                <span className="level-summary">
+                  <b>{levelStats[level].studentCount}</b> студентов · <b>{levelStats[level].groupCount}</b> групп · <b>{levelStats[level].freeSeats}</b> своб. мест
+                </span>
+              </button>
+              <button className="btn-secondary level-edit-btn" title="Пока не реализовано" onClick={(e) => e.stopPropagation()}>
+                <Pencil size={12} /> Редактировать
+              </button>
+            </div>
             <div className={`level-body ${isOpen ? "" : "collapsed"}`}>
               <div className="group-grid" style={{ marginTop: 10 }}>
                 {levelGroups.map((g) => {
                   const cnt = activeCount(g.id);
-                  const full = cnt >= g.maxSize;
+                  const pct = g.maxSize > 0 ? Math.min(100, Math.round((cnt / g.maxSize) * 100)) : 0;
+                  const fillClass = pct >= 100 ? "full" : pct >= 70 ? "mid" : "low";
+                  const needsAttention = g.status === "active" && cnt === 0;
+                  const isClosed = g.status === "archived";
+                  const dayList = (g.days || DEFAULT_DAYS).split(",").filter(Boolean);
                   return (
                     <div
                       key={g.id}
-                      className={`group-card ${g.status === "archived" ? "archived" : ""}`}
+                      className={`group-card ${isClosed ? "archived" : ""} ${needsAttention ? "needs-attention" : ""}`}
                       onClick={() => onSelectGroup(g.id)}
                     >
-                      <div className="group-card-name">{g.name}</div>
-                      <div className="group-card-meta">{g.time} · {g.teacher}{g.status === "archived" ? " · закрыта" : ""}</div>
-                      <div className={`group-card-count ${full ? "full" : ""}`}>{cnt} / {g.maxSize} студентов</div>
+                      {!isClosed && (
+                        <button
+                          className="group-card-quick-action"
+                          title="Добавить студента"
+                          onClick={(e) => { e.stopPropagation(); onQuickAddStudent(g.id); }}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      )}
+                      <div className="gc-top">
+                        <div className="group-card-name">{g.name}</div>
+                        <span className={`gc-status-badge ${isClosed ? "closed" : "open"}`}>{isClosed ? "Закрыта" : "Активный"}</span>
+                      </div>
+                      <div className="gc-time-big">{g.time}</div>
+                      {dayList.length > 0 && (
+                        <div className="gc-days">
+                          {dayList.map((d) => <span key={d} className="gc-day-pill">{d}</span>)}
+                        </div>
+                      )}
+                      <div className="gc-meta-row"><User size={13} /> Учитель: <b>{g.teacher}</b></div>
+                      <div className="gc-meta-row"><Users size={13} /> Студенты: <b>{cnt}</b></div>
+                      <div className="group-capacity-row">
+                        <span className="group-capacity-count">{cnt}<span className="max"> / {g.maxSize} студентов</span></span>
+                      </div>
+                      <div className="group-capacity-track">
+                        <div className={`group-capacity-fill ${fillClass}`} style={{ width: `${Math.max(pct, cnt > 0 ? 4 : 0)}%` }} />
+                      </div>
                     </div>
                   );
                 })}
@@ -1857,9 +2232,13 @@ function GroupsList({ groups, students, teachers, showNewGroupForm, setShowNewGr
                     style={{ borderStyle: "dashed" }}
                     onClick={() => onSelectGroup(`unassigned::${level}`)}
                   >
-                    <div className="group-card-name">Без группы</div>
-                    <div className="group-card-meta">студенты без назначенной группы</div>
-                    <div className="group-card-count">{unassigned} студентов</div>
+                    <div className="gc-top">
+                      <div className="group-card-name">Без группы</div>
+                    </div>
+                    <div className="gc-meta-row">студенты без назначенной группы</div>
+                    <div className="group-capacity-row">
+                      <span className="group-capacity-count">{unassigned}<span className="max"> студентов</span></span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1892,6 +2271,11 @@ function GroupDetail({
   const [renaming, setRenaming] = useState(false);
   const [nameInput, setNameInput] = useState(group.name);
   const [notes, setNotes] = useState(group.notes || "");
+  const days = (group.days || DEFAULT_DAYS).split(",").filter(Boolean);
+  const toggleGroupDay = (day) => {
+    const next = days.includes(day) ? days.filter((d) => d !== day) : [...days, day].sort((a, b) => DAYS_OF_WEEK.indexOf(a) - DAYS_OF_WEEK.indexOf(b));
+    updateGroup(group.id, { days: next.join(",") || DEFAULT_DAYS }, `Изменил дни занятий группы «${group.name}»`);
+  };
   const [deleteStep, setDeleteStep] = useState(null); // null | "confirm-empty" | "choose"
   const [transferTargetId, setTransferTargetId] = useState("");
 
@@ -2000,6 +2384,22 @@ function GroupDetail({
             </>
           )}
         </div>
+        {!group.isVirtual && (
+          <div className="field" style={{ marginBottom: 14 }}>
+            <label>Дни занятий</label>
+            <div className="gc-days">
+              {DAYS_OF_WEEK.map((d) => (
+                <button
+                  key={d} type="button"
+                  className={`gc-day-pill ${days.includes(d) ? "selected" : ""}`}
+                  onClick={() => toggleGroupDay(d)}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {!group.isVirtual && (
           <div className="field">
             <label>Заметки о группе</label>

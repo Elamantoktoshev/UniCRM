@@ -19,7 +19,8 @@ create table if not exists public.groups (
   max_size integer not null default 15,
   status text not null default 'active',
   notes text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  days text not null default 'Пн,Вт,Ср,Чт,Пт'
 );
 
 create table if not exists public.students (
