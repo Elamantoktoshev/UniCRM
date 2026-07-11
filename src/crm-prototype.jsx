@@ -5,7 +5,7 @@ import {
 import {
   Plus, Users, Target, TrendingUp, Percent, X, Loader2,
   ArrowLeft, Archive, ArchiveRestore, Pencil, Wallet, UserPlus, AlertTriangle, Check,
-  LogOut, History, Shield, Trash2, Search, Paperclip, Inbox, ChevronRight, Eye, User, Layers,
+  LogOut, History, Shield, Trash2, Search, Paperclip, Inbox, ChevronRight, Eye, User, Layers, Info,
 } from "lucide-react";
 import { supabase } from "./supabaseClient.js";
 
@@ -106,10 +106,17 @@ function paymentCoversMonth(payment, monthStr) {
   return diff >= 0 && diff < duration;
 }
 
-function getRecognizedRevenueForMonth(students, revenueAdjustments, monthStr) {
+// paymentMethodFilter is optional — omitted/"all" means no filtering, same
+// as before this was added. Refunds (revenueAdjustments) don't carry a
+// payment method in the data model, so they're always deducted in full
+// regardless of the filter — there's no way to attribute a refund to a
+// specific method, so narrowing revenue by method while still subtracting
+// the whole refund is the closest honest approximation available.
+function getRecognizedRevenueForMonth(students, revenueAdjustments, monthStr, paymentMethodFilter) {
   let total = 0;
   for (const student of students) {
     for (const p of student.payments || []) {
+      if (paymentMethodFilter && paymentMethodFilter !== "all" && p.paymentMethod !== paymentMethodFilter) continue;
       if (paymentCoversMonth(p, monthStr)) {
         total += (p.amount || 0) / Math.max(1, p.courseDurationMonths || 1);
       }
@@ -121,14 +128,33 @@ function getRecognizedRevenueForMonth(students, revenueAdjustments, monthStr) {
   return total;
 }
 
-function getCashReceivedForMonth(students, monthStr) {
+function getCashReceivedForMonth(students, monthStr, paymentMethodFilter) {
   let total = 0;
   for (const student of students) {
     for (const p of student.payments || []) {
+      if (paymentMethodFilter && paymentMethodFilter !== "all" && p.paymentMethod !== paymentMethodFilter) continue;
       if (monthKeyOf(p.date) === monthStr) total += p.amount || 0;
     }
   }
   return total;
+}
+
+// Breakdown by payment method for a given month, in whichever mode
+// ("cash" | "accrual") the caller is currently viewing — used for the
+// "Поступления по способу оплаты" card, only meaningful when no single
+// method filter is already applied.
+function getRevenueByPaymentMethod(students, monthStr, mode) {
+  const totals = {};
+  for (const student of students) {
+    for (const p of student.payments || []) {
+      const included = mode === "cash" ? monthKeyOf(p.date) === monthStr : paymentCoversMonth(p, monthStr);
+      if (!included) continue;
+      const amt = mode === "cash" ? (p.amount || 0) : (p.amount || 0) / Math.max(1, p.courseDurationMonths || 1);
+      const method = p.paymentMethod || "Не указано";
+      totals[method] = (totals[method] || 0) + amt;
+    }
+  }
+  return totals;
 }
 
 // Effective expenses for a given month: recurring templates (optionally
@@ -3473,6 +3499,8 @@ function FinanceView({
   revenueAdjustments, addRevenueAdjustment, deleteRevenueAdjustment,
 }) {
   const [month, setMonth] = useState(currentMonthKey());
+  const [revenueMode, setRevenueMode] = useState("cash"); // cash | accrual
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("all"); // all | one of PAYMENT_METHODS
   const [showAddForm, setShowAddForm] = useState(false);
   const firstCategory = expenseCategories[0] || { name: "", group: EXPENSE_GROUPS[0].key };
   const [form, setForm] = useState({ group: firstCategory.group, category: firstCategory.name, amount: "", month: currentMonthKey(), note: "", isRecurring: false });
@@ -3488,11 +3516,28 @@ function FinanceView({
 
   const monthExpenses = useMemo(() => getEffectiveExpensesForMonth(expenses, month), [expenses, month]);
   const totalExpenses = useMemo(() => monthExpenses.reduce((s, e) => s + e.amount, 0), [monthExpenses]);
-  const recognizedRevenue = useMemo(() => getRecognizedRevenueForMonth(students, revenueAdjustments, month), [students, revenueAdjustments, month]);
-  const cashReceived = useMemo(() => getCashReceivedForMonth(students, month), [students, month]);
+  const recognizedRevenue = useMemo(
+    () => getRecognizedRevenueForMonth(students, revenueAdjustments, month, paymentMethodFilter),
+    [students, revenueAdjustments, month, paymentMethodFilter]
+  );
+  const cashReceived = useMemo(
+    () => getCashReceivedForMonth(students, month, paymentMethodFilter),
+    [students, month, paymentMethodFilter]
+  );
   const deferredDiff = cashReceived - recognizedRevenue;
-  const netProfit = recognizedRevenue - totalExpenses;
-  const margin = recognizedRevenue > 0 ? (netProfit / recognizedRevenue) * 100 : 0;
+  const revenueByMethod = useMemo(
+    () => getRevenueByPaymentMethod(students, month, revenueMode),
+    [students, month, revenueMode]
+  );
+  // Every KPI/chart below reads displayRevenue, which is the one number
+  // that actually switches with the Касса/Начисление toggle — everything
+  // downstream (profit, margin, the 12-month trend) is derived from it, so
+  // flipping the toggle recomputes the whole page consistently. Expenses
+  // are deliberately NOT mode-dependent (they're already tied to their own
+  // `month` directly, per the task).
+  const displayRevenue = revenueMode === "cash" ? cashReceived : recognizedRevenue;
+  const netProfit = displayRevenue - totalExpenses;
+  const margin = displayRevenue > 0 ? (netProfit / displayRevenue) * 100 : 0;
   const monthRefunds = useMemo(() => revenueAdjustments.filter((a) => a.month === month), [revenueAdjustments, month]);
   const studentsById = useMemo(() => {
     const map = {};
@@ -3508,11 +3553,13 @@ function FinanceView({
 
   const trendData = useMemo(() => {
     return lastNMonths(12, month).map((m) => {
-      const rev = getRecognizedRevenueForMonth(students, revenueAdjustments, m);
+      const rev = revenueMode === "cash"
+        ? getCashReceivedForMonth(students, m, paymentMethodFilter)
+        : getRecognizedRevenueForMonth(students, revenueAdjustments, m, paymentMethodFilter);
       const exp = getEffectiveExpensesForMonth(expenses, m).reduce((s, e) => s + e.amount, 0);
       return { name: formatMonthShort(m), value: rev - exp };
     });
-  }, [students, expenses, revenueAdjustments, month]);
+  }, [students, expenses, revenueAdjustments, month, revenueMode, paymentMethodFilter]);
 
   const categoriesInGroup = (group) => expenseCategories.filter((c) => c.group === group);
 
@@ -3561,31 +3608,51 @@ function FinanceView({
 
   return (
     <>
-      <div className="chart-card" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 20 }}>
-        <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, -1))} title="Предыдущий месяц">
-          <ArrowLeft size={13} />
-        </button>
-        <div className="crm-slab" style={{ fontSize: 16, fontWeight: 700, minWidth: 170, textAlign: "center" }}>
-          {formatMonthLabel(month)}
+      <div className="chart-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, marginBottom: 20, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, -1))} title="Предыдущий месяц">
+            <ArrowLeft size={13} />
+          </button>
+          <div className="crm-slab" style={{ fontSize: 16, fontWeight: 700, minWidth: 170, textAlign: "center" }}>
+            {formatMonthLabel(month)}
+          </div>
+          <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, 1))} title="Следующий месяц">
+            <ArrowLeft size={13} style={{ transform: "rotate(180deg)" }} />
+          </button>
         </div>
-        <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, 1))} title="Следующий месяц">
-          <ArrowLeft size={13} style={{ transform: "rotate(180deg)" }} />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="segmented-control">
+            <button className={revenueMode === "cash" ? "active" : ""} onClick={() => setRevenueMode("cash")}>Касса</button>
+            <button className={revenueMode === "accrual" ? "active" : ""} onClick={() => setRevenueMode("accrual")}>Начисление</button>
+          </div>
+          <span
+            title="Касса — когда деньги реально получены. Начисление — в каком месяце засчитывается доход (например курс на 3 месяца распределяется по месяцам)."
+            style={{ display: "inline-flex", color: "var(--ink-soft)", cursor: "help" }}
+          >
+            <Info size={16} />
+          </span>
+        </div>
+      </div>
+
+      <div className="level-pill-tabs" style={{ marginBottom: 20 }}>
+        <button className={`level-pill-tab ${paymentMethodFilter === "all" ? "active" : ""}`} onClick={() => setPaymentMethodFilter("all")}>Все</button>
+        {PAYMENT_METHODS.map((m) => (
+          <button key={m} className={`level-pill-tab ${paymentMethodFilter === m ? "active" : ""}`} onClick={() => setPaymentMethodFilter(m)}>
+            {m}
+          </button>
+        ))}
       </div>
 
       <div className="kpi-grid">
         <div className="kpi-card">
-          <div className="kpi-label"><TrendingUp size={12} /> Признанная выручка</div>
-          <div className="kpi-value crm-mono">{fmt(recognizedRevenue)}</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-label"><Wallet size={12} /> Получено денег</div>
-          <div className="kpi-value crm-mono">{fmt(cashReceived)}</div>
+          <div className="kpi-label">
+            <TrendingUp size={12} /> Выручка · {revenueMode === "cash" ? "касса" : "начисление"}
+            {paymentMethodFilter !== "all" ? ` · ${paymentMethodFilter}` : ""}
+          </div>
+          <div className="kpi-value crm-mono">{fmt(displayRevenue)}</div>
           {Math.abs(deferredDiff) >= 1 && (
             <div style={{ fontSize: 10.5, color: "var(--ink-soft)", marginTop: 4 }}>
-              {deferredDiff > 0
-                ? `Отложенная выручка: ${fmt(deferredDiff)} — деньги уже получены, признаются в будущих месяцах`
-                : `Признано сверх кассы на ${fmt(-deferredDiff)} — доход от прошлых пакетных оплат`}
+              {revenueMode === "cash" ? `Начисление: ${fmt(recognizedRevenue)}` : `Касса: ${fmt(cashReceived)}`}
             </div>
           )}
         </div>
@@ -3596,7 +3663,10 @@ function FinanceView({
         <div className="kpi-card">
           <div className="kpi-label"><Percent size={12} /> Чистая прибыль</div>
           <div className="kpi-value crm-mono" style={{ color: netProfit >= 0 ? "var(--primary)" : "var(--danger)" }}>{fmt(netProfit)}</div>
-          <div style={{ fontSize: 10.5, color: "var(--ink-soft)", marginTop: 4 }}>Маржа: {margin.toFixed(1)}%</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label"><Percent size={12} /> Маржа</div>
+          <div className="kpi-value crm-mono" style={{ color: margin >= 0 ? "var(--primary)" : "var(--danger)" }}>{margin.toFixed(1)}%</div>
         </div>
       </div>
 
@@ -3631,6 +3701,29 @@ function FinanceView({
           </ResponsiveContainer>
         </div>
       </div>
+
+      {paymentMethodFilter === "all" && Object.keys(revenueByMethod).length > 0 && (
+        <div className="chart-card" style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 12 }}>
+            Поступления по способу оплаты · {revenueMode === "cash" ? "касса" : "начисление"}
+          </div>
+          {Object.entries(revenueByMethod).sort((a, b) => b[1] - a[1]).map(([methodName, amount]) => {
+            const total = Object.values(revenueByMethod).reduce((a, b) => a + b, 0);
+            const pct = total > 0 ? (amount / total) * 100 : 0;
+            return (
+              <div key={methodName} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span>{methodName}</span>
+                  <span className="crm-mono">{fmt(amount)} · {pct.toFixed(0)}%</span>
+                </div>
+                <div className="progress-track" style={{ height: 7 }}>
+                  <div className="progress-fill" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="section-title" style={{ marginTop: 0 }}>Расходы за {formatMonthLabel(month)}</div>
       <div style={{ marginBottom: 12 }}>
